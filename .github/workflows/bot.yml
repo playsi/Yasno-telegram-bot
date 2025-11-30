@@ -32,7 +32,7 @@ jobs:
           GROUP: ${{ secrets.GROUP }}
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
         run: |
-          python yasno_bot_refactored.py
+          python main.py
 
       - name: Commit encrypted DB
         run: |
