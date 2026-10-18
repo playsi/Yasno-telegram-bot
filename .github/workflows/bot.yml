@@ -2,32 +2,37 @@ name: Yasno Telegram Bot
 
 on:
   schedule:
-    - cron: "0 * * * *" 
-  workflow_dispatch:    
+    # Не на :00 — у цю хвилину GitHub найчастіше затримує або пропускає запуски.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+# Два запуски одночасно конфліктували б при git push і могли б надіслати дублі.
+concurrency:
+  group: yasno-bot
+  cancel-in-progress: false
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     permissions:
       contents: write
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.PAT_TOKEN }}
+          token: ${{ secrets.PAT_TOKEN || github.token }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Run bot
         env:
@@ -36,17 +41,26 @@ jobs:
           DSOS: ${{ secrets.DSOS }}
           GROUP: ${{ secrets.GROUP }}
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
-        run: |
-          python main.py
+          QUIET_HOURS: ${{ vars.QUIET_HOURS }}
+        run: python main.py
 
-      - name: Commit encrypted DB
+      # Зберігаємо дані навіть якщо бот впав посередині: він уже міг надіслати
+      # повідомлення, і без збереження наступний запуск надіслав би їх ще раз.
+      - name: Commit encrypted data
+        if: success() || failure()
         run: |
-          if [[ `git status --porcelain` ]]; then
-            git config user.name "github-actions"
-            git config user.email "github-actions@github.com"
-            git add bot_data.json
-            git commit -m "🔒 Update encrypted bot database"
-            git push
-          else
-            echo "No DB changes to commit"
+          mkdir -p data
+          git add bot_data.json data
+          if git diff --cached --quiet; then
+            echo "No data changes to commit"
+            exit 0
           fi
+          git config user.name "playsi"
+          git config user.email "playsiproffesor@gmail.com"
+          git commit -m "🔒 Update encrypted bot data"
+          for attempt in 1 2 3 4; do
+            git pull --rebase origin "$GITHUB_REF_NAME" && git push origin "HEAD:$GITHUB_REF_NAME" && exit 0
+            echo "Push failed (attempt $attempt), retrying..."
+            sleep $((attempt * 5))
+          done
+          exit 1
